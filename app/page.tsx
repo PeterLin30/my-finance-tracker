@@ -21,9 +21,10 @@ export default function App() {
   const [keterangan, setKeterangan] = useState("");
 
   const [filterBulan, setFilterBulan] = useState("Semua");
-  
-  // --- STATE BARU UNTUK FITUR ACCORDION (LIHAT ISI KATEGORI) ---
   const [kategoriExpanded, setKategoriExpanded] = useState<string | null>(null);
+  
+  // --- STATE BARU: UNTUK MENAMPUNG DATA YANG SEDANG DI-EDIT ---
+  const [editData, setEditData] = useState<any>(null);
 
   // --- CEK SESI LOGIN ---
   useEffect(() => {
@@ -32,26 +33,18 @@ export default function App() {
     setIsCheckingAuth(false);
   }, []);
 
-  // --- MENGAKTIFKAN WEB-SOCKETS REALTIME ---
+  // --- REALTIME WEBSOCKETS ---
   useEffect(() => {
     if (!isLoggedIn) return;
-
     fetchTransaksi();
-
     const channel = supabase
       .channel('realtime-transaksi')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'transaksi' }, 
-        (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transaksi' }, () => {
           fetchTransaksi();
-        }
-      )
+      })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [isLoggedIn]);
 
   async function fetchTransaksi() {
@@ -70,38 +63,48 @@ export default function App() {
     e.preventDefault();
     const correctPassword = process.env.NEXT_PUBLIC_WEB_PASSWORD;
     if (passwordInput === correctPassword) {
-      setIsLoggedIn(true);
-      setLoginError(false);
-      localStorage.setItem("finance_auth", "true");
+      setIsLoggedIn(true); setLoginError(false); localStorage.setItem("finance_auth", "true");
     } else {
-      setLoginError(true);
-      setPasswordInput("");
+      setLoginError(true); setPasswordInput("");
     }
   }
 
   function handleLogout() {
-    setIsLoggedIn(false);
-    localStorage.removeItem("finance_auth");
+    setIsLoggedIn(false); localStorage.removeItem("finance_auth");
   }
 
   async function handleSimpan(e: React.FormEvent) {
     e.preventDefault();
     const { error } = await supabase.from("transaksi").insert([{ waktu, tipe, kategori, jumlah: Number(jumlah), keterangan }]);
-    
-    if (error) {
-      alert("❌ Gagal: " + error.message);
-    } else {
-      setJumlah("");
-      setKeterangan("");
-    }
+    if (error) alert("❌ Gagal: " + error.message);
+    else { setJumlah(""); setKeterangan(""); }
   }
 
   async function hapusTransaksi(id: string) {
-    const yakin = window.confirm("Apakah kamu yakin ingin menghapus transaksi ini? Saldo akan dihitung ulang secara otomatis.");
+    const yakin = window.confirm("Apakah kamu yakin ingin menghapus transaksi ini?");
     if (!yakin) return;
-
     const { error } = await supabase.from("transaksi").delete().eq("id", id);
     if (error) alert("❌ Gagal menghapus: " + error.message);
+  }
+
+  // --- FUNGSI BARU: SIMPAN PERUBAHAN EDIT ---
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    const { error } = await supabase
+      .from("transaksi")
+      .update({
+        waktu: editData.waktu,
+        keterangan: editData.keterangan,
+        jumlah: Number(editData.jumlah)
+      })
+      .eq("id", editData.id); // Update berdasarkan ID transaksi
+
+    if (error) {
+      alert("❌ Gagal menyimpan perubahan: " + error.message);
+    } else {
+      setEditData(null); // Tutup Pop-up Modal jika sukses
+      // Realtime otomatis me-refresh tabel!
+    }
   }
 
   // --- LOGIKA KALKULASI ---
@@ -132,9 +135,7 @@ export default function App() {
     } else {
       if (analisisKeluar.length > 0) {
         const semuaTanggal = analisisKeluar.map(t => new Date(t.waktu).getTime());
-        const tanggalPertama = Math.min(...semuaTanggal);
-        const tanggalTerakhir = Math.max(new Date().getTime(), ...semuaTanggal);
-        const selisihMilidetik = tanggalTerakhir - tanggalPertama;
+        const selisihMilidetik = Math.max(new Date().getTime(), ...semuaTanggal) - Math.min(...semuaTanggal);
         const totalHari = Math.ceil(selisihMilidetik / (1000 * 60 * 60 * 24)) || 1; 
         rataHarian = sumKeluarAnalisis / totalHari;
       }
@@ -142,23 +143,19 @@ export default function App() {
   }
 
   const top5Pengeluaran = [...analisisKeluar].sort((a, b) => b.jumlah - a.jumlah).slice(0, 5);
-
   const kategoriPengeluaran = ["Makanan", "Transportasi", "Hiburan", "Tagihan", "Kesehatan", "Lainnya"];
   const kategoriPemasukan = ["Gaji Pokok", "Bonus/THR", "Hadiah", "Investasi", "Lainnya"];
 
   if (isCheckingAuth) return <div className="h-screen w-screen flex items-center justify-center bg-gray-100">Memuat...</div>;
 
-  // --- HALAMAN LOGIN ---
   if (!isLoggedIn) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-900 p-4">
         <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-sm text-center">
           <div className="text-5xl mb-4">🔒</div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">Akses Dibatasi</h2>
-          <p className="text-gray-500 mb-6 text-sm">Masukkan password untuk melihat data.</p>
-          <form onSubmit={handleLogin} className="flex flex-col gap-4">
+          <form onSubmit={handleLogin} className="flex flex-col gap-4 mt-6">
             <input type="password" value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="••••••••" className={`w-full border p-3 rounded-lg text-center tracking-widest ${loginError ? 'border-red-500 bg-red-50' : ''}`} required />
-            {loginError && <p className="text-red-500 text-sm">Password salah, coba lagi!</p>}
             <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">BUKA DASHBOARD</button>
           </form>
         </div>
@@ -166,35 +163,27 @@ export default function App() {
     );
   }
 
-  // --- TAMPILAN DASHBOARD ---
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-50 overflow-hidden">
+    <div className="flex flex-col md:flex-row h-screen bg-gray-50 overflow-hidden relative">
       
-      {/* SIDEBAR NAV */}
+      {/* SIDEBAR */}
       <div className="w-full md:w-64 bg-slate-900 text-white flex flex-col flex-shrink-0 shadow-md z-10">
         <div className="p-4 md:p-6 flex flex-row md:flex-col items-center md:items-stretch justify-between gap-4 md:gap-8 overflow-x-auto whitespace-nowrap">
           <h1 className="text-xl md:text-2xl font-bold tracking-wide hidden md:block">💰 Finance 2026</h1>
           <h1 className="text-xl font-bold tracking-wide md:hidden">💰 FinTrack</h1>
-          
           <nav className="flex flex-row md:flex-col gap-2 flex-1 md:flex-none overflow-x-auto no-scrollbar">
             <button onClick={() => {setActiveMenu("dashboard"); setKategoriExpanded(null);}} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "dashboard" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📊 Ringkasan</button>
             <button onClick={() => {setActiveMenu("input"); setKategoriExpanded(null);}} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "input" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📝 Tambah</button>
             <button onClick={() => setActiveMenu("analisis")} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "analisis" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📈 Analisis</button>
           </nav>
-          
           <button onClick={handleLogout} className="text-sm md:text-base font-semibold px-4 py-2 md:p-3 text-red-400 hover:text-red-300 md:mt-auto border md:border-t md:border-0 border-red-500/30 rounded-lg md:rounded-none">Keluar</button>
         </div>
       </div>
 
       {/* KONTEN UTAMA */}
       <div className="flex-1 p-4 md:p-8 overflow-y-auto w-full">
-        {fetchError && (
-          <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded text-sm md:text-base">
-            <p className="font-bold">Error Database:</p><p>{fetchError}</p>
-          </div>
-        )}
+        {fetchError && <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded text-sm md:text-base"><p className="font-bold">Error Database:</p><p>{fetchError}</p></div>}
 
-        {/* MENU 1: RINGKASAN */}
         {activeMenu === "dashboard" && (
           <div>
             <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800 mb-6">Ringkasan Keseluruhan</h2>
@@ -217,14 +206,14 @@ export default function App() {
               <h3 className="text-lg md:text-xl font-bold text-gray-800 mb-4 border-b pb-2">Riwayat Terakhir</h3>
               {loading && transaksi.length === 0 ? <p className="text-gray-500 text-sm">Memuat data...</p> : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[500px]">
+                  <table className="w-full text-left min-w-[550px]">
                     <thead>
                       <tr className="text-slate-400 text-xs md:text-sm uppercase">
                         <th className="pb-3 font-semibold">Tanggal</th>
                         <th className="pb-3 font-semibold">Kategori</th>
                         <th className="pb-3 font-semibold">Keterangan</th>
                         <th className="pb-3 font-semibold text-right">Jumlah</th>
-                        <th className="pb-3 font-semibold text-center w-12">Aksi</th>
+                        <th className="pb-3 font-semibold text-center w-20">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="text-sm md:text-base">
@@ -236,8 +225,9 @@ export default function App() {
                           <td className={`py-3 md:py-4 text-right font-bold ${t.tipe === "Pemasukan" ? "text-green-500" : "text-gray-800"}`}>
                             {t.tipe === "Pemasukan" ? "+" : "-"} Rp {Number(t.jumlah || 0).toLocaleString("id-ID")}
                           </td>
-                          <td className="py-3 md:py-4 text-center">
-                            <button onClick={() => hapusTransaksi(t.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition" title="Hapus Transaksi">X</button>
+                          <td className="py-3 md:py-4 text-center flex items-center justify-center gap-2">
+                            <button onClick={() => setEditData(t)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition" title="Edit">✏️</button>
+                            <button onClick={() => hapusTransaksi(t.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition" title="Hapus">X</button>
                           </td>
                         </tr>
                       ))}
@@ -249,7 +239,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MENU 2: INPUT TRANSAKSI */}
         {activeMenu === "input" && (
             <div className="w-full max-w-2xl bg-white p-5 md:p-8 rounded-xl shadow-sm mx-auto">
                 <h2 className="text-xl md:text-2xl font-bold text-gray-800 mb-6 border-b pb-4">Catat Transaksi</h2>
@@ -257,9 +246,7 @@ export default function App() {
                   <div className="flex flex-col md:flex-row gap-4 md:gap-5">
                     <div className="flex-1">
                       <label className="block text-xs md:text-sm font-bold text-slate-600 mb-1 md:mb-2">Tipe</label>
-                      <select value={tipe} onChange={(e) => setTipe(e.target.value)} className="w-full border-2 border-slate-200 p-2 md:p-3 rounded-lg focus:border-blue-500 outline-none">
-                        <option>Pengeluaran</option><option>Pemasukan</option>
-                      </select>
+                      <select value={tipe} onChange={(e) => setTipe(e.target.value)} className="w-full border-2 border-slate-200 p-2 md:p-3 rounded-lg focus:border-blue-500 outline-none"><option>Pengeluaran</option><option>Pemasukan</option></select>
                     </div>
                     <div className="flex-1">
                       <label className="block text-xs md:text-sm font-bold text-slate-600 mb-1 md:mb-2">Tanggal</label>
@@ -285,21 +272,13 @@ export default function App() {
             </div>
         )}
 
-        {/* MENU 3: ANALISIS DETAIL */}
         {activeMenu === "analisis" && (
           <div>
             <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
               <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800">Analisis</h2>
               <div className="flex items-center gap-2 md:gap-3">
                 <label className="text-sm md:text-base font-semibold text-slate-600">Bulan:</label>
-                <select 
-                  value={filterBulan} 
-                  onChange={(e) => {
-                    setFilterBulan(e.target.value);
-                    setKategoriExpanded(null); // Tutup accordion saat ganti bulan
-                  }} 
-                  className="border-2 border-slate-200 p-1 md:p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500 flex-1 md:flex-none"
-                >
+                <select value={filterBulan} onChange={(e) => { setFilterBulan(e.target.value); setKategoriExpanded(null); }} className="border-2 border-slate-200 p-1 md:p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500 flex-1 md:flex-none">
                   <option value="Semua">Semua Waktu</option>
                   {daftarBulan.map((bulan) => <option key={bulan} value={bulan}>{bulan}</option>)}
                 </select>
@@ -308,26 +287,20 @@ export default function App() {
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
               <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border-l-4 border-green-500">
-                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Pemasukan</h3>
-                <p className="text-sm md:text-xl font-bold text-gray-800 mt-1">Rp {sumMasukAnalisis.toLocaleString("id-ID")}</p>
+                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Pemasukan</h3><p className="text-sm md:text-xl font-bold text-gray-800 mt-1">Rp {sumMasukAnalisis.toLocaleString("id-ID")}</p>
               </div>
               <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border-l-4 border-red-500">
-                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Pengeluaran</h3>
-                <p className="text-sm md:text-xl font-bold text-gray-800 mt-1">Rp {sumKeluarAnalisis.toLocaleString("id-ID")}</p>
+                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Pengeluaran</h3><p className="text-sm md:text-xl font-bold text-gray-800 mt-1">Rp {sumKeluarAnalisis.toLocaleString("id-ID")}</p>
               </div>
               <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border-l-4 border-orange-500">
-                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Rata Harian</h3>
-                <p className="text-sm md:text-xl font-bold text-orange-600 mt-1">Rp {rataHarian > 0 ? Math.round(rataHarian).toLocaleString("id-ID") : "0"}</p>
+                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Rata Harian</h3><p className="text-sm md:text-xl font-bold text-orange-600 mt-1">Rp {rataHarian > 0 ? Math.round(rataHarian).toLocaleString("id-ID") : "0"}</p>
               </div>
               <div className="bg-white p-4 md:p-5 rounded-xl shadow-sm border-l-4 border-blue-500">
-                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Surplus</h3>
-                <p className="text-sm md:text-xl font-bold text-blue-600 mt-1">Rp {(sumMasukAnalisis - sumKeluarAnalisis).toLocaleString("id-ID")}</p>
+                <h3 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase">Surplus</h3><p className="text-sm md:text-xl font-bold text-blue-600 mt-1">Rp {(sumMasukAnalisis - sumKeluarAnalisis).toLocaleString("id-ID")}</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-              
-              {/* DISTRIBUSI KATEGORI (DENGAN ACCORDION) */}
               <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
                 <h3 className="text-base md:text-lg font-bold text-gray-800 mb-4 md:mb-6 border-b pb-2">Distribusi Kategori</h3>
                 <div className="flex flex-col gap-3">
@@ -338,39 +311,23 @@ export default function App() {
 
                     return (
                       <div key={kat} className={`border rounded-lg transition-all duration-300 ${isExpanded ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-white hover:border-slate-300'}`}>
-                        
-                        {/* Area yang bisa diklik */}
-                        <div 
-                          className="p-3 md:p-4 cursor-pointer group"
-                          onClick={() => setKategoriExpanded(isExpanded ? null : kat)}
-                        >
+                        <div className="p-3 md:p-4 cursor-pointer group" onClick={() => setKategoriExpanded(isExpanded ? null : kat)}>
                           <div className="flex justify-between items-center text-xs md:text-sm font-semibold mb-2">
-                            <span className="text-slate-700 flex items-center gap-2">
-                              {kat}
-                              <span className={`text-[10px] font-bold transition-opacity ${isExpanded ? 'text-blue-500 opacity-100' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}>
-                                {isExpanded ? "▲ Tutup" : "▼ Lihat isi"}
-                              </span>
-                            </span>
+                            <span className="text-slate-700 flex items-center gap-2">{kat} <span className={`text-[10px] font-bold transition-opacity ${isExpanded ? 'text-blue-500 opacity-100' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}>{isExpanded ? "▲ Tutup" : "▼ Lihat isi"}</span></span>
                             <span className="text-slate-800">Rp {jum.toLocaleString("id-ID")}</span>
                           </div>
-                          <div className="w-full bg-slate-200 rounded-full h-2 md:h-2.5 overflow-hidden">
-                            <div className="bg-blue-500 h-full rounded-full transition-all duration-500" style={{ width: `${persentase}%` }}></div>
-                          </div>
+                          <div className="w-full bg-slate-200 rounded-full h-2 md:h-2.5 overflow-hidden"><div className="bg-blue-500 h-full rounded-full transition-all duration-500" style={{ width: `${persentase}%` }}></div></div>
                         </div>
 
-                        {/* Area Accordion (Daftar Transaksi Detail) */}
                         {isExpanded && (
                           <div className="px-3 pb-3 md:px-4 md:pb-4 border-t border-blue-100">
                             <div className="mt-3 flex flex-col gap-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
                               {isiTransaksi.map((dt) => (
                                 <div key={dt.id} className="flex justify-between items-center text-[10px] md:text-xs bg-white p-2 rounded border border-slate-100">
-                                  <div className="flex flex-col">
-                                    <span className="font-bold text-slate-700 truncate max-w-[150px] md:max-w-[200px]">{dt.keterangan}</span>
-                                    <span className="text-slate-400">{dt.waktu}</span>
-                                  </div>
+                                  <div className="flex flex-col"><span className="font-bold text-slate-700 truncate max-w-[150px] md:max-w-[200px]">{dt.keterangan}</span><span className="text-slate-400">{dt.waktu}</span></div>
                                   <div className="flex items-center gap-2">
                                     <span className="font-bold text-red-500 whitespace-nowrap">Rp {Number(dt.jumlah).toLocaleString("id-ID")}</span>
-                                    {/* Tombol hapus mini di dalam accordion */}
+                                    <button onClick={(e) => { e.stopPropagation(); setEditData(dt); }} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white px-1.5 py-0.5 rounded transition">✏️</button>
                                     <button onClick={(e) => { e.stopPropagation(); hapusTransaksi(dt.id); }} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-1.5 py-0.5 rounded transition">X</button>
                                   </div>
                                 </div>
@@ -378,7 +335,6 @@ export default function App() {
                             </div>
                           </div>
                         )}
-
                       </div>
                     );
                   })}
@@ -393,13 +349,11 @@ export default function App() {
                       <div key={t.id} className="flex items-center justify-between p-2 md:p-3 bg-slate-50 rounded-lg border border-slate-100">
                         <div className="flex items-center gap-2 md:gap-4 overflow-hidden">
                           <div className="w-6 h-6 md:w-8 md:h-8 shrink-0 rounded-full bg-red-100 text-red-600 flex justify-center items-center font-bold text-xs md:text-sm">#{idx + 1}</div>
-                          <div className="truncate">
-                            <p className="font-bold text-gray-800 text-xs md:text-sm truncate">{t.keterangan}</p>
-                            <p className="text-[10px] md:text-xs text-slate-500">{t.waktu}</p>
-                          </div>
+                          <div className="truncate"><p className="font-bold text-gray-800 text-xs md:text-sm truncate">{t.keterangan}</p><p className="text-[10px] md:text-xs text-slate-500">{t.waktu}</p></div>
                         </div>
-                        <div className="flex items-center gap-2 ml-2">
-                          <p className="font-bold text-red-600 text-xs md:text-sm whitespace-nowrap">Rp {Number(t.jumlah).toLocaleString("id-ID")}</p>
+                        <div className="flex items-center gap-1 md:gap-2 ml-2">
+                          <p className="font-bold text-red-600 text-xs md:text-sm whitespace-nowrap mr-2">Rp {Number(t.jumlah).toLocaleString("id-ID")}</p>
+                          <button onClick={() => setEditData(t)} className="bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white px-2 py-1 rounded text-[10px] md:text-xs font-bold transition" title="Edit">✏️</button>
                           <button onClick={() => hapusTransaksi(t.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-[10px] md:text-xs font-bold transition" title="Hapus">X</button>
                         </div>
                       </div>
@@ -412,6 +366,36 @@ export default function App() {
         )}
 
       </div>
+
+      {/* --- POP-UP MODAL UNTUK EDIT DATA --- */}
+      {editData && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 md:p-8 relative">
+            <button onClick={() => setEditData(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 font-bold text-xl">&times;</button>
+            <h3 className="text-xl md:text-2xl font-extrabold text-slate-800 mb-6 border-b pb-3">Edit Transaksi</h3>
+            
+            <form onSubmit={handleUpdate} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-xs md:text-sm font-bold text-slate-600 mb-2">Tanggal</label>
+                <input type="date" value={editData.waktu} onChange={(e) => setEditData({...editData, waktu: e.target.value})} className="w-full border-2 border-slate-200 p-2 md:p-3 rounded-lg focus:border-blue-500 outline-none" required />
+              </div>
+              <div>
+                <label className="block text-xs md:text-sm font-bold text-slate-600 mb-2">Nama / Keterangan</label>
+                <input type="text" value={editData.keterangan} onChange={(e) => setEditData({...editData, keterangan: e.target.value})} className="w-full border-2 border-slate-200 p-2 md:p-3 rounded-lg focus:border-blue-500 outline-none" required />
+              </div>
+              <div>
+                <label className="block text-xs md:text-sm font-bold text-slate-600 mb-2">Nominal (Rp)</label>
+                <input type="number" value={editData.jumlah} onChange={(e) => setEditData({...editData, jumlah: e.target.value})} className="w-full border-2 border-slate-200 p-2 md:p-3 rounded-lg focus:border-blue-500 outline-none text-lg font-bold" required min="1" />
+              </div>
+              <div className="flex gap-3 mt-4">
+                <button type="button" onClick={() => setEditData(null)} className="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-lg hover:bg-slate-200 transition">Batal</button>
+                <button type="submit" className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition shadow-lg">Simpan</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
