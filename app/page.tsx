@@ -124,11 +124,27 @@ export default function App() {
   const sortedKategori = Object.entries(kategoriStats).sort((a: any, b: any) => b[1] - a[1]);
 
   let rataHarian = 0;
-  if (filterBulan !== "Semua" && sumKeluarAnalisis > 0) {
-    const hariIni = new Date();
-    const isBulanIni = filterBulan === `${hariIni.getFullYear()}-${String(hariIni.getMonth() + 1).padStart(2, '0')}`;
-    const jumlahHari = isBulanIni ? hariIni.getDate() : new Date(Number(filterBulan.split("-")[0]), Number(filterBulan.split("-")[1]), 0).getDate();
-    rataHarian = sumKeluarAnalisis / jumlahHari;
+  if (sumKeluarAnalisis > 0) {
+    if (filterBulan !== "Semua") {
+      // Logika jika memilih 1 bulan spesifik
+      const hariIni = new Date();
+      const isBulanIni = filterBulan === `${hariIni.getFullYear()}-${String(hariIni.getMonth() + 1).padStart(2, '0')}`;
+      const jumlahHari = isBulanIni ? hariIni.getDate() : new Date(Number(filterBulan.split("-")[0]), Number(filterBulan.split("-")[1]), 0).getDate();
+      rataHarian = sumKeluarAnalisis / jumlahHari;
+    } else {
+      // Logika jika memilih "Semua Waktu"
+      if (analisisKeluar.length > 0) {
+        const semuaTanggal = analisisKeluar.map(t => new Date(t.waktu).getTime());
+        const tanggalPertama = Math.min(...semuaTanggal);
+        const tanggalTerakhir = Math.max(new Date().getTime(), ...semuaTanggal);
+        
+        // Menghitung selisih hari (milidetik diubah ke hari)
+        const selisihMilidetik = tanggalTerakhir - tanggalPertama;
+        const totalHari = Math.ceil(selisihMilidetik / (1000 * 60 * 60 * 24)) || 1; // Minimal 1 hari agar tidak dibagi nol
+        
+        rataHarian = sumKeluarAnalisis / totalHari;
+      }
+    }
   }
 
   const top5Pengeluaran = [...analisisKeluar].sort((a, b) => b.jumlah - a.jumlah).slice(0, 5);
