@@ -22,18 +22,42 @@ export default function App() {
 
   const [filterBulan, setFilterBulan] = useState("Semua");
 
+  // --- CEK SESI LOGIN ---
   useEffect(() => {
     const authStatus = localStorage.getItem("finance_auth");
     if (authStatus === "true") setIsLoggedIn(true);
     setIsCheckingAuth(false);
   }, []);
 
+  // --- MENGAKTIFKAN WEB-SOCKETS REALTIME ---
   useEffect(() => {
-    if (isLoggedIn) fetchTransaksi();
+    if (!isLoggedIn) return;
+
+    // 1. Tarik data pertama kali saat login
+    fetchTransaksi();
+
+    // 2. Buka "Telinga" (Channel) untuk mendengar perubahan di Supabase
+    const channel = supabase
+      .channel('realtime-transaksi')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transaksi' }, // Dengarkan Insert/Update/Delete
+        (payload) => {
+          console.log('Perubahan terdeteksi di server!', payload);
+          // Jika ada perubahan dari device manapun, otomatis tarik data baru!
+          fetchTransaksi();
+        }
+      )
+      .subscribe();
+
+    // 3. Tutup telinga saat aplikasi ditutup (Pembersihan Memory)
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [isLoggedIn]);
 
   async function fetchTransaksi() {
-    setLoading(true);
+    // Hilangkan setLoading(true) di sini agar layar tidak berkedip saat data baru masuk secara realtime
     try {
       const { data, error } = await supabase.from("transaksi").select("*").order("waktu", { ascending: false });
       if (error) setFetchError(error.message);
@@ -41,7 +65,7 @@ export default function App() {
     } catch (err: any) {
       setFetchError(err.message || "Terjadi kesalahan sistem");
     } finally {
-      setLoading(false);
+      setLoading(false); // Hanya dieksekusi di tarikan pertama
     }
   }
 
@@ -63,19 +87,25 @@ export default function App() {
     localStorage.removeItem("finance_auth");
   }
 
+  // --- REVISI FUNGSI SIMPAN ---
   async function handleSimpan(e: React.FormEvent) {
     e.preventDefault();
     const { error } = await supabase.from("transaksi").insert([{ waktu, tipe, kategori, jumlah: Number(jumlah), keterangan }]);
-    if (error) alert("❌ Gagal: " + error.message);
-    else {
+    
+    if (error) {
+      alert("❌ Gagal: " + error.message);
+    } else {
       alert("✅ Data tersimpan!");
       setJumlah("");
       setKeterangan("");
-      fetchTransaksi();
-      setActiveMenu("dashboard"); 
+      
+      // REVISI: Kita menghapus setActiveMenu("dashboard") di sini.
+      // Layar akan TETAP berada di form Input.
+      // fetchTransaksi() tidak perlu dipanggil manual karena fitur Realtime akan memanggilnya secara otomatis!
     }
   }
 
+  // --- LOGIKA KALKULASI (SAMA SEPERTI SEBELUMNYA) ---
   const totalMasuk = transaksi.filter((t) => t.tipe === "Pemasukan").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const totalKeluar = transaksi.filter((t) => t.tipe === "Pengeluaran").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const saldo = totalMasuk - totalKeluar;
@@ -108,7 +138,7 @@ export default function App() {
 
   if (isCheckingAuth) return <div className="h-screen w-screen flex items-center justify-center bg-gray-100">Memuat...</div>;
 
-  // --- HALAMAN LOGIN (RESPONSIVE) ---
+  // --- HALAMAN LOGIN ---
   if (!isLoggedIn) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-900 p-4">
@@ -126,12 +156,11 @@ export default function App() {
     );
   }
 
-  // --- DASHBOARD (RESPONSIVE) ---
+  // --- TAMPILAN DASHBOARD ---
   return (
-    // Container utama berubah menjadi flex-col di HP (atas-bawah) dan flex-row di Laptop (kiri-kanan)
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 overflow-hidden">
       
-      {/* SIDEBAR MENJADI TOP NAV DI MOBILE */}
+      {/* SIDEBAR NAV */}
       <div className="w-full md:w-64 bg-slate-900 text-white flex flex-col flex-shrink-0 shadow-md z-10">
         <div className="p-4 md:p-6 flex flex-row md:flex-col items-center md:items-stretch justify-between gap-4 md:gap-8 overflow-x-auto whitespace-nowrap">
           <h1 className="text-xl md:text-2xl font-bold tracking-wide hidden md:block">💰 Finance 2026</h1>
@@ -155,11 +184,10 @@ export default function App() {
           </div>
         )}
 
-        {/* MENU 1: RINGKASAN UMUM */}
+        {/* MENU 1: RINGKASAN */}
         {activeMenu === "dashboard" && (
           <div>
             <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800 mb-6">Ringkasan Keseluruhan</h2>
-            {/* Grid berubah dari 3 kolom jadi 1 kolom di HP */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
               <div className="bg-white p-5 md:p-6 rounded-xl shadow-sm border-l-4 md:border-l-0 md:border-b-4 border-green-500">
                 <h3 className="text-gray-500 text-xs md:text-sm font-semibold uppercase">Pemasukan</h3>
@@ -177,7 +205,7 @@ export default function App() {
 
             <div className="bg-white rounded-xl shadow-sm p-4 md:p-6 overflow-hidden">
               <h3 className="text-lg md:text-xl font-bold text-gray-800 mb-4 border-b pb-2">Riwayat Terakhir</h3>
-              {loading ? <p className="text-gray-500 text-sm">Memuat data...</p> : (
+              {loading && transaksi.length === 0 ? <p className="text-gray-500 text-sm">Memuat data...</p> : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left min-w-[500px]">
                     <thead>
