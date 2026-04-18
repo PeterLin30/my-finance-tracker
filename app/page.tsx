@@ -22,8 +22,6 @@ export default function App() {
 
   const [filterBulan, setFilterBulan] = useState("Semua");
   const [kategoriExpanded, setKategoriExpanded] = useState<string | null>(null);
-  
-  // --- STATE BARU: UNTUK MENAMPUNG DATA YANG SEDANG DI-EDIT ---
   const [editData, setEditData] = useState<any>(null);
 
   // --- CEK SESI LOGIN ---
@@ -87,27 +85,14 @@ export default function App() {
     if (error) alert("❌ Gagal menghapus: " + error.message);
   }
 
-  // --- FUNGSI BARU: SIMPAN PERUBAHAN EDIT ---
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
-    const { error } = await supabase
-      .from("transaksi")
-      .update({
-        waktu: editData.waktu,
-        keterangan: editData.keterangan,
-        jumlah: Number(editData.jumlah)
-      })
-      .eq("id", editData.id); // Update berdasarkan ID transaksi
-
-    if (error) {
-      alert("❌ Gagal menyimpan perubahan: " + error.message);
-    } else {
-      setEditData(null); // Tutup Pop-up Modal jika sukses
-      // Realtime otomatis me-refresh tabel!
-    }
+    const { error } = await supabase.from("transaksi").update({ waktu: editData.waktu, keterangan: editData.keterangan, jumlah: Number(editData.jumlah) }).eq("id", editData.id);
+    if (error) alert("❌ Gagal menyimpan perubahan: " + error.message);
+    else setEditData(null); 
   }
 
-  // --- LOGIKA KALKULASI ---
+  // --- LOGIKA KALKULASI & FILTER DATA ---
   const totalMasuk = transaksi.filter((t) => t.tipe === "Pemasukan").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const totalKeluar = transaksi.filter((t) => t.tipe === "Pengeluaran").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const saldo = totalMasuk - totalKeluar;
@@ -145,6 +130,48 @@ export default function App() {
   const top5Pengeluaran = [...analisisKeluar].sort((a, b) => b.jumlah - a.jumlah).slice(0, 5);
   const kategoriPengeluaran = ["Makanan", "Transportasi", "Hiburan", "Tagihan", "Kesehatan", "Lainnya"];
   const kategoriPemasukan = ["Gaji Pokok", "Bonus/THR", "Hadiah", "Investasi", "Lainnya"];
+
+  // --- FUNGSI BARU: DOWNLOAD KE CSV ---
+  function downloadCSV() {
+    if (dataAnalisis.length === 0) {
+      alert("Tidak ada data untuk di-download pada bulan ini.");
+      return;
+    }
+
+    // 1. Buat Header CSV
+    const headers = ["Tanggal", "Tipe Transaksi", "Kategori", "Keterangan", "Nominal (Rp)"];
+
+    // 2. Format baris data
+    // Kita membungkus keterangan dengan petik dua ("") untuk mencegah error jika ada koma (,) di dalam nama keterangan
+    const rows = dataAnalisis.map(t => [
+      t.waktu,
+      t.tipe,
+      t.kategori,
+      `"${t.keterangan.replace(/"/g, '""')}"`, 
+      t.jumlah
+    ]);
+
+    // 3. Gabungkan semuanya menjadi teks dengan format CSV
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    // 4. Tambahkan BOM (\uFEFF) agar terbaca sempurna di Microsoft Excel, lalu buat trigger download
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    
+    // Nama file dinamis sesuai filter
+    const namaFile = filterBulan === "Semua" ? "Laporan_Semua_Waktu.csv" : `Laporan_Bulan_${filterBulan}.csv`;
+    link.setAttribute("download", namaFile);
+    
+    // Eksekusi download
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 
   if (isCheckingAuth) return <div className="h-screen w-screen flex items-center justify-center bg-gray-100">Memuat...</div>;
 
@@ -276,12 +303,22 @@ export default function App() {
           <div>
             <div className="flex flex-col md:flex-row justify-between md:items-center gap-4 mb-6">
               <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800">Analisis</h2>
-              <div className="flex items-center gap-2 md:gap-3">
-                <label className="text-sm md:text-base font-semibold text-slate-600">Bulan:</label>
-                <select value={filterBulan} onChange={(e) => { setFilterBulan(e.target.value); setKategoriExpanded(null); }} className="border-2 border-slate-200 p-1 md:p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500 flex-1 md:flex-none">
-                  <option value="Semua">Semua Waktu</option>
-                  {daftarBulan.map((bulan) => <option key={bulan} value={bulan}>{bulan}</option>)}
-                </select>
+              
+              {/* --- AREA TOMBOL DOWNLOAD & FILTER BULAN --- */}
+              <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full md:w-auto">
+                <button 
+                  onClick={downloadCSV}
+                  className="bg-green-600 hover:bg-green-700 text-white text-sm md:text-base font-bold py-2 px-3 md:px-4 rounded-lg transition shadow-sm flex items-center gap-2 flex-1 md:flex-none justify-center"
+                >
+                  <span className="text-lg">📥</span> <span className="hidden sm:inline">Download CSV</span><span className="sm:hidden">CSV</span>
+                </button>
+
+                <div className="flex items-center gap-2 flex-1 md:flex-none">
+                  <select value={filterBulan} onChange={(e) => { setFilterBulan(e.target.value); setKategoriExpanded(null); }} className="w-full md:w-auto border-2 border-slate-200 p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500">
+                    <option value="Semua">Semua Waktu</option>
+                    {daftarBulan.map((bulan) => <option key={bulan} value={bulan}>{bulan}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -395,7 +432,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
