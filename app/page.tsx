@@ -21,6 +21,9 @@ export default function App() {
   const [keterangan, setKeterangan] = useState("");
 
   const [filterBulan, setFilterBulan] = useState("Semua");
+  
+  // --- STATE BARU UNTUK FITUR ACCORDION (LIHAT ISI KATEGORI) ---
+  const [kategoriExpanded, setKategoriExpanded] = useState<string | null>(null);
 
   // --- CEK SESI LOGIN ---
   useEffect(() => {
@@ -41,7 +44,6 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'transaksi' }, 
         (payload) => {
-          // Tarik data baru saat ada Insert, Update, atau Delete!
           fetchTransaksi();
         }
       )
@@ -91,23 +93,15 @@ export default function App() {
     } else {
       setJumlah("");
       setKeterangan("");
-      // Layar tetap di form input agar bisa input data banyak sekaligus
     }
   }
 
-  // --- FUNGSI BARU: HAPUS TRANSAKSI ---
   async function hapusTransaksi(id: string) {
-    // Keamanan tambahan: Pastikan user yakin ingin menghapus
     const yakin = window.confirm("Apakah kamu yakin ingin menghapus transaksi ini? Saldo akan dihitung ulang secara otomatis.");
     if (!yakin) return;
 
     const { error } = await supabase.from("transaksi").delete().eq("id", id);
-    
-    if (error) {
-      alert("❌ Gagal menghapus: " + error.message);
-    }
-    // Jika sukses, kita tidak perlu memanggil fetchTransaksi() lagi 
-    // karena WebSockets Realtime akan otomatis memperbarui datanya!
+    if (error) alert("❌ Gagal menghapus: " + error.message);
   }
 
   // --- LOGIKA KALKULASI ---
@@ -183,8 +177,8 @@ export default function App() {
           <h1 className="text-xl font-bold tracking-wide md:hidden">💰 FinTrack</h1>
           
           <nav className="flex flex-row md:flex-col gap-2 flex-1 md:flex-none overflow-x-auto no-scrollbar">
-            <button onClick={() => setActiveMenu("dashboard")} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "dashboard" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📊 Ringkasan</button>
-            <button onClick={() => setActiveMenu("input")} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "input" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📝 Tambah</button>
+            <button onClick={() => {setActiveMenu("dashboard"); setKategoriExpanded(null);}} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "dashboard" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📊 Ringkasan</button>
+            <button onClick={() => {setActiveMenu("input"); setKategoriExpanded(null);}} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "input" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📝 Tambah</button>
             <button onClick={() => setActiveMenu("analisis")} className={`text-sm md:text-base font-semibold px-4 py-2 md:p-3 rounded-lg transition ${activeMenu === "analisis" ? "bg-blue-600" : "hover:bg-slate-800"}`}>📈 Analisis</button>
           </nav>
           
@@ -243,13 +237,7 @@ export default function App() {
                             {t.tipe === "Pemasukan" ? "+" : "-"} Rp {Number(t.jumlah || 0).toLocaleString("id-ID")}
                           </td>
                           <td className="py-3 md:py-4 text-center">
-                            <button 
-                              onClick={() => hapusTransaksi(t.id)} 
-                              className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition"
-                              title="Hapus Transaksi"
-                            >
-                              X
-                            </button>
+                            <button onClick={() => hapusTransaksi(t.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition" title="Hapus Transaksi">X</button>
                           </td>
                         </tr>
                       ))}
@@ -304,7 +292,14 @@ export default function App() {
               <h2 className="text-2xl md:text-3xl font-extrabold text-gray-800">Analisis</h2>
               <div className="flex items-center gap-2 md:gap-3">
                 <label className="text-sm md:text-base font-semibold text-slate-600">Bulan:</label>
-                <select value={filterBulan} onChange={(e) => setFilterBulan(e.target.value)} className="border-2 border-slate-200 p-1 md:p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500 flex-1 md:flex-none">
+                <select 
+                  value={filterBulan} 
+                  onChange={(e) => {
+                    setFilterBulan(e.target.value);
+                    setKategoriExpanded(null); // Tutup accordion saat ganti bulan
+                  }} 
+                  className="border-2 border-slate-200 p-1 md:p-2 rounded-lg font-bold bg-white text-sm md:text-base outline-none focus:border-blue-500 flex-1 md:flex-none"
+                >
                   <option value="Semua">Semua Waktu</option>
                   {daftarBulan.map((bulan) => <option key={bulan} value={bulan}>{bulan}</option>)}
                 </select>
@@ -331,20 +326,59 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+              
+              {/* DISTRIBUSI KATEGORI (DENGAN ACCORDION) */}
               <div className="bg-white rounded-xl shadow-sm p-4 md:p-6">
                 <h3 className="text-base md:text-lg font-bold text-gray-800 mb-4 md:mb-6 border-b pb-2">Distribusi Kategori</h3>
-                <div className="flex flex-col gap-4 md:gap-5">
+                <div className="flex flex-col gap-3">
                   {sortedKategori.length === 0 ? <p className="text-slate-400 italic text-sm">Kosong</p> : sortedKategori.map(([kat, jum]: any) => {
                     const persentase = ((jum / sumKeluarAnalisis) * 100).toFixed(1);
+                    const isExpanded = kategoriExpanded === kat;
+                    const isiTransaksi = analisisKeluar.filter((t) => t.kategori === kat);
+
                     return (
-                      <div key={kat}>
-                        <div className="flex justify-between text-xs md:text-sm font-semibold mb-1">
-                          <span className="text-slate-700">{kat}</span>
-                          <span className="text-slate-800">Rp {jum.toLocaleString("id-ID")}</span>
+                      <div key={kat} className={`border rounded-lg transition-all duration-300 ${isExpanded ? 'border-blue-200 bg-blue-50/30' : 'border-slate-100 bg-white hover:border-slate-300'}`}>
+                        
+                        {/* Area yang bisa diklik */}
+                        <div 
+                          className="p-3 md:p-4 cursor-pointer group"
+                          onClick={() => setKategoriExpanded(isExpanded ? null : kat)}
+                        >
+                          <div className="flex justify-between items-center text-xs md:text-sm font-semibold mb-2">
+                            <span className="text-slate-700 flex items-center gap-2">
+                              {kat}
+                              <span className={`text-[10px] font-bold transition-opacity ${isExpanded ? 'text-blue-500 opacity-100' : 'text-slate-400 opacity-0 group-hover:opacity-100'}`}>
+                                {isExpanded ? "▲ Tutup" : "▼ Lihat isi"}
+                              </span>
+                            </span>
+                            <span className="text-slate-800">Rp {jum.toLocaleString("id-ID")}</span>
+                          </div>
+                          <div className="w-full bg-slate-200 rounded-full h-2 md:h-2.5 overflow-hidden">
+                            <div className="bg-blue-500 h-full rounded-full transition-all duration-500" style={{ width: `${persentase}%` }}></div>
+                          </div>
                         </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2 md:h-3">
-                          <div className="bg-blue-500 h-2 md:h-3 rounded-full" style={{ width: `${persentase}%` }}></div>
-                        </div>
+
+                        {/* Area Accordion (Daftar Transaksi Detail) */}
+                        {isExpanded && (
+                          <div className="px-3 pb-3 md:px-4 md:pb-4 border-t border-blue-100">
+                            <div className="mt-3 flex flex-col gap-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                              {isiTransaksi.map((dt) => (
+                                <div key={dt.id} className="flex justify-between items-center text-[10px] md:text-xs bg-white p-2 rounded border border-slate-100">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-slate-700 truncate max-w-[150px] md:max-w-[200px]">{dt.keterangan}</span>
+                                    <span className="text-slate-400">{dt.waktu}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-red-500 whitespace-nowrap">Rp {Number(dt.jumlah).toLocaleString("id-ID")}</span>
+                                    {/* Tombol hapus mini di dalam accordion */}
+                                    <button onClick={(e) => { e.stopPropagation(); hapusTransaksi(dt.id); }} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-1.5 py-0.5 rounded transition">X</button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                       </div>
                     );
                   })}
@@ -366,13 +400,7 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-2 ml-2">
                           <p className="font-bold text-red-600 text-xs md:text-sm whitespace-nowrap">Rp {Number(t.jumlah).toLocaleString("id-ID")}</p>
-                          <button 
-                            onClick={() => hapusTransaksi(t.id)} 
-                            className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-[10px] md:text-xs font-bold transition"
-                            title="Hapus"
-                          >
-                            X
-                          </button>
+                          <button onClick={() => hapusTransaksi(t.id)} className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-[10px] md:text-xs font-bold transition" title="Hapus">X</button>
                         </div>
                       </div>
                     ))}
