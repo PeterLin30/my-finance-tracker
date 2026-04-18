@@ -33,31 +33,26 @@ export default function App() {
   useEffect(() => {
     if (!isLoggedIn) return;
 
-    // 1. Tarik data pertama kali saat login
     fetchTransaksi();
 
-    // 2. Buka "Telinga" (Channel) untuk mendengar perubahan di Supabase
     const channel = supabase
       .channel('realtime-transaksi')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'transaksi' }, // Dengarkan Insert/Update/Delete
+        { event: '*', schema: 'public', table: 'transaksi' }, 
         (payload) => {
-          console.log('Perubahan terdeteksi di server!', payload);
-          // Jika ada perubahan dari device manapun, otomatis tarik data baru!
+          // Tarik data baru saat ada Insert, Update, atau Delete!
           fetchTransaksi();
         }
       )
       .subscribe();
 
-    // 3. Tutup telinga saat aplikasi ditutup (Pembersihan Memory)
     return () => {
       supabase.removeChannel(channel);
     };
   }, [isLoggedIn]);
 
   async function fetchTransaksi() {
-    // Hilangkan setLoading(true) di sini agar layar tidak berkedip saat data baru masuk secara realtime
     try {
       const { data, error } = await supabase.from("transaksi").select("*").order("waktu", { ascending: false });
       if (error) setFetchError(error.message);
@@ -65,7 +60,7 @@ export default function App() {
     } catch (err: any) {
       setFetchError(err.message || "Terjadi kesalahan sistem");
     } finally {
-      setLoading(false); // Hanya dieksekusi di tarikan pertama
+      setLoading(false); 
     }
   }
 
@@ -87,7 +82,6 @@ export default function App() {
     localStorage.removeItem("finance_auth");
   }
 
-  // --- REVISI FUNGSI SIMPAN ---
   async function handleSimpan(e: React.FormEvent) {
     e.preventDefault();
     const { error } = await supabase.from("transaksi").insert([{ waktu, tipe, kategori, jumlah: Number(jumlah), keterangan }]);
@@ -95,17 +89,28 @@ export default function App() {
     if (error) {
       alert("❌ Gagal: " + error.message);
     } else {
-      alert("✅ Data tersimpan!");
       setJumlah("");
       setKeterangan("");
-      
-      // REVISI: Kita menghapus setActiveMenu("dashboard") di sini.
-      // Layar akan TETAP berada di form Input.
-      // fetchTransaksi() tidak perlu dipanggil manual karena fitur Realtime akan memanggilnya secara otomatis!
+      // Layar tetap di form input agar bisa input data banyak sekaligus
     }
   }
 
-  // --- LOGIKA KALKULASI (SAMA SEPERTI SEBELUMNYA) ---
+  // --- FUNGSI BARU: HAPUS TRANSAKSI ---
+  async function hapusTransaksi(id: string) {
+    // Keamanan tambahan: Pastikan user yakin ingin menghapus
+    const yakin = window.confirm("Apakah kamu yakin ingin menghapus transaksi ini? Saldo akan dihitung ulang secara otomatis.");
+    if (!yakin) return;
+
+    const { error } = await supabase.from("transaksi").delete().eq("id", id);
+    
+    if (error) {
+      alert("❌ Gagal menghapus: " + error.message);
+    }
+    // Jika sukses, kita tidak perlu memanggil fetchTransaksi() lagi 
+    // karena WebSockets Realtime akan otomatis memperbarui datanya!
+  }
+
+  // --- LOGIKA KALKULASI ---
   const totalMasuk = transaksi.filter((t) => t.tipe === "Pemasukan").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const totalKeluar = transaksi.filter((t) => t.tipe === "Pengeluaran").reduce((acc, curr) => acc + (Number(curr.jumlah) || 0), 0);
   const saldo = totalMasuk - totalKeluar;
@@ -126,22 +131,17 @@ export default function App() {
   let rataHarian = 0;
   if (sumKeluarAnalisis > 0) {
     if (filterBulan !== "Semua") {
-      // Logika jika memilih 1 bulan spesifik
       const hariIni = new Date();
       const isBulanIni = filterBulan === `${hariIni.getFullYear()}-${String(hariIni.getMonth() + 1).padStart(2, '0')}`;
       const jumlahHari = isBulanIni ? hariIni.getDate() : new Date(Number(filterBulan.split("-")[0]), Number(filterBulan.split("-")[1]), 0).getDate();
       rataHarian = sumKeluarAnalisis / jumlahHari;
     } else {
-      // Logika jika memilih "Semua Waktu"
       if (analisisKeluar.length > 0) {
         const semuaTanggal = analisisKeluar.map(t => new Date(t.waktu).getTime());
         const tanggalPertama = Math.min(...semuaTanggal);
         const tanggalTerakhir = Math.max(new Date().getTime(), ...semuaTanggal);
-        
-        // Menghitung selisih hari (milidetik diubah ke hari)
         const selisihMilidetik = tanggalTerakhir - tanggalPertama;
-        const totalHari = Math.ceil(selisihMilidetik / (1000 * 60 * 60 * 24)) || 1; // Minimal 1 hari agar tidak dibagi nol
-        
+        const totalHari = Math.ceil(selisihMilidetik / (1000 * 60 * 60 * 24)) || 1; 
         rataHarian = sumKeluarAnalisis / totalHari;
       }
     }
@@ -230,6 +230,7 @@ export default function App() {
                         <th className="pb-3 font-semibold">Kategori</th>
                         <th className="pb-3 font-semibold">Keterangan</th>
                         <th className="pb-3 font-semibold text-right">Jumlah</th>
+                        <th className="pb-3 font-semibold text-center w-12">Aksi</th>
                       </tr>
                     </thead>
                     <tbody className="text-sm md:text-base">
@@ -240,6 +241,15 @@ export default function App() {
                           <td className="py-3 md:py-4 text-gray-800">{t.keterangan}</td>
                           <td className={`py-3 md:py-4 text-right font-bold ${t.tipe === "Pemasukan" ? "text-green-500" : "text-gray-800"}`}>
                             {t.tipe === "Pemasukan" ? "+" : "-"} Rp {Number(t.jumlah || 0).toLocaleString("id-ID")}
+                          </td>
+                          <td className="py-3 md:py-4 text-center">
+                            <button 
+                              onClick={() => hapusTransaksi(t.id)} 
+                              className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-xs font-bold transition"
+                              title="Hapus Transaksi"
+                            >
+                              X
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -354,7 +364,16 @@ export default function App() {
                             <p className="text-[10px] md:text-xs text-slate-500">{t.waktu}</p>
                           </div>
                         </div>
-                        <p className="font-bold text-red-600 text-xs md:text-sm whitespace-nowrap ml-2">Rp {Number(t.jumlah).toLocaleString("id-ID")}</p>
+                        <div className="flex items-center gap-2 ml-2">
+                          <p className="font-bold text-red-600 text-xs md:text-sm whitespace-nowrap">Rp {Number(t.jumlah).toLocaleString("id-ID")}</p>
+                          <button 
+                            onClick={() => hapusTransaksi(t.id)} 
+                            className="bg-red-50 text-red-500 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-[10px] md:text-xs font-bold transition"
+                            title="Hapus"
+                          >
+                            X
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
