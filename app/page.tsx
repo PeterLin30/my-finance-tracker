@@ -26,8 +26,6 @@ export default function App() {
 
   // --- CEK SESI LOGIN ---
   useEffect(() => {
-    const authStatus = localStorage.getItem("finance_auth");
-    if (authStatus === "true") setIsLoggedIn(true);
     setIsCheckingAuth(false);
   }, []);
 
@@ -61,14 +59,14 @@ export default function App() {
     e.preventDefault();
     const correctPassword = process.env.NEXT_PUBLIC_WEB_PASSWORD;
     if (passwordInput === correctPassword) {
-      setIsLoggedIn(true); setLoginError(false); localStorage.setItem("finance_auth", "true");
+      setIsLoggedIn(true); setLoginError(false);
     } else {
       setLoginError(true); setPasswordInput("");
     }
   }
 
   function handleLogout() {
-    setIsLoggedIn(false); localStorage.removeItem("finance_auth");
+    setIsLoggedIn(false);
   }
 
   async function handleSimpan(e: React.FormEvent) {
